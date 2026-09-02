@@ -34,6 +34,12 @@ buildGoModule (finalAttrs: {
 
   env.CGO_ENABLED = 0;
 
+  postPatch = ''
+    substituteInPlace internal/api/client.go \
+      --replace-fail 'AppVersion     = "linux-vpn@4.13.1"' 'AppVersion     = "linux-vpn@4.18.1"' \
+      --replace-fail 'UserAgent      = "ProtonVPN/4.13.1 (Linux; go-pvpn)"' 'UserAgent      = "ProtonVPN/4.18.1 (Linux; go-pvpn)"'
+  '';
+
   nativeBuildInputs = [
     makeWrapper
   ];
