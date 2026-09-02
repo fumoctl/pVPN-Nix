@@ -1,0 +1,81 @@
+name: Auto Update pVPN
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target version (e.g. 0.2.8, leave blank for latest release)'
+        required: false
+        default: ''
+      create_pr:
+        description: 'Create a pull request instead of committing directly to main'
+        type: boolean
+        default: false
+
+concurrency:
+  group: update-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check for new version
+        id: check
+        run: ./scripts/check-version.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update package
+        if: steps.check.outputs.needs_update == 'true' || github.event.inputs.target_version != ''
+        id: update
+        run: |
+          TARGET="${{ github.event.inputs.target_version }}"
+          ./scripts/update-version.sh "$TARGET"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push changes directly
+        if: (steps.check.outputs.needs_update == 'true' || github.event.inputs.target_version != '') && github.event.inputs.create_pr != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          NEW_VER="${{ steps.update.outputs.new_version || steps.check.outputs.latest_version }}"
+          git add pkgs/pvpn.nix
+          git commit -m "pvpn: update to ${NEW_VER}"
+          git push
+
+      - name: Create Pull Request
+        if: (steps.check.outputs.needs_update == 'true' || github.event.inputs.target_version != '') && github.event.inputs.create_pr == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "pvpn: update to ${{ steps.update.outputs.new_version || steps.check.outputs.latest_version }}"
+          title: "pvpn: update to ${{ steps.update.outputs.new_version || steps.check.outputs.latest_version }}"
+          body: |
+            Automated package version update for `pvpn`.
+
+            - **Previous version**: `${{ steps.update.outputs.old_version || steps.check.outputs.current_version }}`
+            - **New version**: `${{ steps.update.outputs.new_version || steps.check.outputs.latest_version }}`
+
+            *Triggered by GitHub Actions auto-update workflow.*
+          branch: "update-pvpn-${{ steps.update.outputs.new_version || steps.check.outputs.latest_version }}"
+          delete-branch: true
